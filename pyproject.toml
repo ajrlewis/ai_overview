@@ -1,0 +1,28 @@
+[build-system]
+requires = [
+    "setuptools>=60",
+    "setuptools-scm>=8.0"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai_search"
+version = "0.1.0"
+description = "Generates an AI overview based on search results matching a query."
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [
+    { name = "ajrlewis", email = "hello@ajrlewis.com" }
+]
+dependencies = [
+    "python-dotenv",
+    "loguru",
+    "git+https://github.com/ajrlewis/webkit.git",
+    "git+https://github.com/ajrlewis/aikit.git",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"*" = ["*.*"]

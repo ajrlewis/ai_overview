@@ -1,0 +1,5 @@
+python-dotenv
+loguru
+
+git+https://github.com/ajrlewis/webkit.git
+git+https://github.com/ajrlewis/aikit.git
