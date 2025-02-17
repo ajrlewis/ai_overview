@@ -24,8 +24,8 @@ model = "mistralai/Mistral-7B-Instruct-v0.3"
 
 # Higher values can increase noise and drown signal, whilst lower
 # values may result in too weak a signal.
-number_of_additional_queries = 1  # The number of additional queries to generate
-number_of_search_results = 2  # The number of search results per query
+number_of_additional_queries = 3  # The number of additional queries to generate
+number_of_search_results = 5  # The number of search results per query
 
 
 def expand_query(query: str) -> list[str]:
@@ -35,7 +35,7 @@ Analyze the following search query:
 
     {query}
 
-Suggest alternative queries to pass to a search engine.
+Suggest {number_of_additional_queries} alternative but related queries to pass to a search engine.
 
 Return your answer as a list of {number_of_additional_queries} strings in JSON format, e.g.
 
@@ -58,36 +58,56 @@ def perform_searches(queries: list[str]) -> list[dict]:
     list_of_search_results = []
     for query in queries:
         search_results = webkit.search.google(
-            # query, max_results=number_of_search_results, sort_by="date"
-            query,
-            max_results=number_of_search_results,
+            query, max_results=number_of_search_results
         )
         list_of_search_results.extend(search_results)
     return list_of_search_results
 
 
-def search_results_relevance(
-    queries: list[str], search_results: list[str]
-) -> list[str]:
-    logger.debug(f"{queries = } {search_results = }")
+# def search_results_relevance(
+#     queries: list[str], search_results: list[str]
+# ) -> list[bool]:
+#     logger.debug(f"{queries = } {search_results = }")
+#     question = f"""
+# Analyze the following search results:
+
+#     {search_results}
+
+# For each search result, assess whether its `title`, `snippet` and `href` are relevant to the following queries:
+
+#     {queries}
+
+# Return a list of boolean values, e.g.
+
+
+#     [ true/false, true/false, ... ]
+# """
+#     relevances = tools.ask(
+#         client=client, model=model, question=question, parse_json=True
+#     )
+#     logger.debug(f"{relevances = }")
+#     return relevances
+
+
+def search_results_relevance(query: str, search_results: list[str]) -> list[float]:
+    logger.debug(f"{query = } {search_results = }")
     question = f"""
 Analyze the following search results:
 
     {search_results}
 
-For each search result, assess whether its `title`, `snippet` and `href` are relevant to the following queries:
+Compute a percentage of how relevant each search result is to the following query:
 
-    {queries}
+    {query}
 
-Return a list of booleans, e.g.
+Return your answer as a list of float values, e.g.
 
-    [ true/false, true/false, ... ]
+    [ 0.0, 100.0, 20.0, ... ]
 """
-    question = f"{prompt_templates.JSON_FORMAT} {question}"
-    data = tools.ask(client=client, model=model, question=question)
-    logger.debug(f"{data = }")
-    relevances = json.loads(data)
+    print("relevances = ", relevances)
+    relevances = tools.ask(client=client, model=model, question=question)
     logger.debug(f"{relevances = }")
+    print("relevances = ", relevances)
     return relevances
 
 
@@ -98,19 +118,16 @@ Analyze the following text:
 
     {text}
 
-Generate an informative overview of the text.
-
-Ensure that the overview answers the following queries:
+Generate an informative overview using the text that answers the following queries:
 
     {queries}
-
-Style the overview as an informative AI search engine bot. Hence, do not refer to the "text" explicitly, rather the subject at hand.
 
 Note.
     - If a segment of the text does not contain the required information then ignore it.
     - If a segment of the text is not applicable to the queries then ignore it.
     - If a segment of the text is duplicated then ignore it.
     - If a segment of the text does not fit in with the majority of the other text, then ignore it.
+    - Do not refer to the "text" explicitly, rather the subject at hand
 
 Do not format your result.
 """
@@ -141,12 +158,15 @@ def _remove_irrelevant_results(
     queries: list[str], search_results: list[dict]
 ) -> list[dict]:
     # Get whether each search result is relevant to the queries
-    relevances = search_results_relevance(queries, search_results)
+    _search_results = [
+        {k: v for k, v in r.items() if k in ("snippet")} for r in search_results
+    ]
+    relevances = search_results_relevance(queries, _search_results)
     # Remove search results that are irrelevant to the query
     relevant_search_results = []
-    for relevance, search_result in zip(relevances, unique_search_results):
-        if relevance:
-            relevant_search_results.append(search_result)
+    # for relevance, search_result in zip(relevances, search_results):
+    #     if relevance:
+    #         relevant_search_results.append(search_result)
     return relevant_search_results
 
 
@@ -158,7 +178,7 @@ def _extract_text_and_links(search_results: list[dict]) -> tuple[str, list[str]]
         snippet = search_result.get("snippet")
         href = search_result.get("href")
         links.append(href)
-        text = f"{title}: {snippet}"
+        text = f"{title} {snippet}"
         texts.append(text)
     text = "\n".join(texts)
     links = list(set(links))
@@ -177,46 +197,60 @@ def _recognise_named_entities(text: str) -> list[dict]:
 def _log_overview(data: dict):
     if overview := data.get("overview"):
         print()
-        logger.info("Overview :")
-        logger.info("    " + overview)
-    # if named_entities := data.get("named_entities"):
-    #     print()
-    #     logger.info("Named Entities:")
-    #     for named_entity in named_entities:
-    #         for key, value in named_entity.items():
-    #             logger.info("    " + key + ": " + str(value))
-    #         # print()
+        logger.info("Generated AI overview:")
+        logger.info(overview)
     if links := data.get("links"):
         print()
-        logger.info("Links:")
-        for link in links:
-            logger.info("    " + link)
+        logger.info("Using the following links:")
+        for index, link in enumerate(links):
+            logger.info(f"{index + 1}. {link}")
 
 
-def ai_search(query: str) -> dict:
+def ai_search(original_query: str = "") -> Optional[dict]:
     now = time.time()
-    logger.info(f"{query = }")
+    if not original_query:
+        logger.error(f"Initial search query not supplied!")
+        return
+    logger.info(f"Initial search query:")
+    logger.info(f"    {original_query}")
 
     # Generate additional search queries
-    queries = expand_query(query)
-    queries.append(query)  # Add original query
-    logger.info(f"{queries = }")
+    additional_queries = expand_query(original_query)
+    logger.info(
+        f"Created {number_of_additional_queries} additional queries to gain a broader insight:"
+    )
+    for query in additional_queries:
+        logger.info(f"    {query}")
+
+    queries = [original_query] + additional_queries  # Add original query
 
     # Search each query.
     search_results = perform_searches(queries)
-    logger.info(f"{search_results = }")
+    logger.info(f"Found {len(search_results)} related search results.")
 
     # Remove unused keys
     unique_search_results = _remove_duplicates_and_unused_keys(search_results)
-    logger.info(f"{unique_search_results = }")
+    logger.info(
+        f"Removed {len(search_results) - len(unique_search_results)} duplicate search results."
+    )
+
+    logger.info(f"Analyzing the following {len(unique_search_results)} search results:")
+    for index, result in enumerate(unique_search_results):
+        logger.info(f"    {index + 1}. {result.get('title')}")
 
     # Remove search results that are irrelevant to the query
-    # relevant_search_results = _remove_irrelevant_results(queries, unique_search_results)
+    # relevant_search_results = _remove_irrelevant_results(
+    #     original_query, unique_search_results
+    # )
+    # logger.info(
+    #     f"Removed {len(unique_search_results) - len(relevant_search_results)} irrelevant search results."
+    # )
     relevant_search_results = unique_search_results
-    logger.info(f"{relevant_search_results = }")
 
     # Extract relevant text and links from search results
     text, links = _extract_text_and_links(relevant_search_results)
+    logger.debug(f"{text = }")
+    logger.debug(f"{links = }")
 
     # Generate overview.
     data = _create_summary_from_text(text, queries)
@@ -224,16 +258,17 @@ def ai_search(query: str) -> dict:
 
     # Named entity recognition.
     named_entities = _recognise_named_entities(data.get("overview"))
-    logger.info(f"{named_entities = }")
+    logger.debug(f"{named_entities = }")
     data["named_entities"] = named_entities
 
     # Log overview generated.
-    logger.info(f"{data = }")
+    logger.debug(f"{data = }")
     _log_overview(data)
 
     # Log duration
     duration = time.time() - now
-    logger.info(f"Completed overview in {round(duration)} seconds!")
+    print()
+    logger.info(f"Completed AI search in {round(duration)} seconds!")
 
     return data
 
@@ -243,5 +278,5 @@ def main(query: str):
 
 
 if __name__ == "__main__":
-    query = sys.argv[1:]
+    query = " ".join(sys.argv[1:])
     main(query)
