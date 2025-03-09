@@ -28,70 +28,32 @@ number_of_additional_queries = 3  # The number of additional queries to generate
 number_of_search_results = 5  # The number of search results per query
 
 
-def expand_query(query: str) -> list[str]:
-    logger.debug(f"{query = }")
-    question = f"""
-Analyze the following search query:
+# LLM Prompts
+
+QUERY_SANITIZATION_TEMPLATE = """
+Sanitize (i.e. correct any spelling mistakes, etc.) the following search query:
 
     {query}
 
-Suggest {number_of_additional_queries} alternative but related queries to pass to a search engine.
-
-Return your answer as a list of {number_of_additional_queries} strings in JSON format, e.g.
-
-    {{
-        "queries": [
-            "alternative query 1",
-            "alternative query 2",
-            ...
-        ]
-    }}
+Return only the sanitized search query in your response.
 """
-    data = tools.ask(client=client, model=model, question=question, parse_json=True)
-    logger.debug(f"{data = }")
-    queries = data.get("queries", [])
-    logger.debug(f"{queries = }")
-    return queries
+
+EXPAND_QUERY_TEMPLATE = """
+Generate {number_of_additional_queries} related search queries based on:
+
+    {query}
+
+Return a list of alternative queries as strings, for example:
+
+    [
+        "related query 1",
+        "related query 2",
+        ...
+    ]
+"""
 
 
-def perform_searches(queries: list[str]) -> list[dict]:
-    list_of_search_results = []
-    for query in queries:
-        search_results = webkit.search.google(
-            query, max_results=number_of_search_results
-        )
-        list_of_search_results.extend(search_results)
-    return list_of_search_results
-
-
-# def search_results_relevance(
-#     queries: list[str], search_results: list[str]
-# ) -> list[bool]:
-#     logger.debug(f"{queries = } {search_results = }")
-#     question = f"""
-# Analyze the following search results:
-
-#     {search_results}
-
-# For each search result, assess whether its `title`, `snippet` and `href` are relevant to the following queries:
-
-#     {queries}
-
-# Return a list of boolean values, e.g.
-
-
-#     [ true/false, true/false, ... ]
-# """
-#     relevances = tools.ask(
-#         client=client, model=model, question=question, parse_json=True
-#     )
-#     logger.debug(f"{relevances = }")
-#     return relevances
-
-
-def search_results_relevance(query: str, search_results: list[str]) -> list[float]:
-    logger.debug(f"{query = } {search_results = }")
-    question = f"""
+RELEVANCE_PROMPT = """
 Analyze the following search results:
 
     {search_results}
@@ -104,36 +66,104 @@ Return your answer as a list of float values, e.g.
 
     [ 0.0, 100.0, 20.0, ... ]
 """
-    print("relevances = ", relevances)
+
+OVERVIEW_PROMPT = """
+Analyze the provided information:
+
+    {text}
+
+Create a concise overview that addresses the following questions:
+
+    {queries}
+
+When generating the overview, disregard any information that:
+- does not contain the required details
+- is not relevant to the questions
+- is duplicated
+- appears inconsistent with the majority of the information
+
+Present the overview in a straightforward manner, focusing on the subject matter.
+"""
+
+# LLM Methods
+
+
+def sanitize_initial_query(query: str) -> str:
+    """
+    Sanitizes the initial query by formatting it into a prompt and then using a language model to generate a sanitized version.
+
+    Args:
+        query (str): The initial query to be sanitized.
+
+    Returns:
+        str: The sanitized query.
+
+    Raises:
+        Exception: If an error occurs during the sanitization process.
+    """
+    logger.debug(f"{query = }")
+    question = QUERY_SANITIZATION_TEMPLATE.format(query=query)
+    try:
+        sanitized_query = tools.ask(client=client, model=model, question=question)
+        logger.debug(f"{sanitized_query = }")
+        return sanitized_query
+    except Exception as e:
+        logger.error(f"Error sanitizing query: {e}")
+        raise
+
+
+def expand_query(query: str) -> list[str]:
+    """
+    Expands a given query into a list of related queries using a language model.
+
+    Args:
+        query (str): The query to be expanded.
+
+    Returns:
+        list[str]: A list of related queries.
+
+    Raises:
+        json.JSONDecodeError: If the response from the language model is not valid JSON.
+    """
+    logger.debug(f"{query = }")
+    question = EXPAND_QUERY_TEMPLATE.format(
+        query=query, number_of_additional_queries=number_of_additional_queries
+    )
+    try:
+        response = tools.ask(client=client, model=model, question=question)
+        logger.debug(f"{response = }")
+        queries = json.loads(response)
+        logger.debug(f"{queries = }")
+        # Ensure the response is a list of strings
+        if not isinstance(queries, list) or not all(
+            isinstance(q, str) for q in queries
+        ):
+            logger.error(f"Invalid response from language model: {response}")
+            raise ValueError("Invalid response from language model")
+        return queries
+    except Exception as e:
+        logger.error(f"Error expanding query: {e}")
+        raise
+
+
+def search_results_relevance(query: str, search_results: list[str]) -> list[float]:
+    logger.debug(f"{query = } {search_results = }")
+    question = RELEVANCE_PROMPT.format(query=query, search_results=search_results)
     relevances = tools.ask(client=client, model=model, question=question)
-    logger.debug(f"{relevances = }")
     print("relevances = ", relevances)
+    logger.debug(f"{relevances = }")
     return relevances
 
 
 def generate_overview(text: str, queries: list[str]) -> str:
     logger.debug(f"{text = } {queries = }")
-    question = f"""
-Analyze the following text:
-
-    {text}
-
-Generate an informative overview using the text that answers the following queries:
-
-    {queries}
-
-Note.
-    - If a segment of the text does not contain the required information then ignore it.
-    - If a segment of the text is not applicable to the queries then ignore it.
-    - If a segment of the text is duplicated then ignore it.
-    - If a segment of the text does not fit in with the majority of the other text, then ignore it.
-    - Do not refer to the "text" explicitly, rather the subject at hand
-
-Do not format your result.
-"""
+    question = OVERVIEW_PROMPT.format(text=text, queries=queries)
     overview = tools.ask(client=client, model=model, question=question)
     logger.debug(f"{overview = }")
     return overview
+
+
+#
 
 
 def _create_summary_from_text(text: str, queries: list[str]) -> dict:
@@ -143,12 +173,15 @@ def _create_summary_from_text(text: str, queries: list[str]) -> dict:
     return data
 
 
+# Search Result Methods.
+
+
 def _remove_duplicates_and_unused_keys(search_results: list[dict]) -> list[dict]:
-    # Remove unused keys
+    """Removes duplicate search results with the same link.
+    Keeps only body text from search result and removes any duplicate"""
     search_results = [
         {k: v for k, v in r.items() if k not in ("body")} for r in search_results
     ]
-    # Remove duplicates search results
     unique_search_results = set(tuple(sorted(r.items())) for r in search_results)
     unique_search_results = [dict(t) for t in unique_search_results]
     return unique_search_results
@@ -194,6 +227,36 @@ def _recognise_named_entities(text: str) -> list[dict]:
     return named_entities
 
 
+def perform_searches(queries: list[str]) -> list[dict]:
+    """
+    Performs Google searches for a list of queries and returns the combined search results.
+
+    Args:
+        queries (list[str]): A list of queries to search for.
+
+    Returns:
+        list[dict]: A list of dictionaries, where each dictionary represents a search result.
+
+    Raises:
+        Exception: If an error occurs during the search process.
+    """
+    logger.debug(f"Performing searches for {len(queries)} queries")
+    list_of_search_results = []
+    for query in queries:
+        logger.debug(f"Searching for: {query}")
+        try:
+            search_results = webkit.search.google(
+                query, max_results=number_of_search_results
+            )
+            logger.debug(f"Found {len(search_results)} results for query: {query}")
+            list_of_search_results.extend(search_results)
+        except Exception as e:
+            logger.error(f"Error searching for query: {query}, {e}")
+            pass
+    logger.debug(f"Total search results: {len(list_of_search_results)}")
+    return list_of_search_results
+
+
 def _log_overview(data: dict):
     if overview := data.get("overview"):
         print()
@@ -214,29 +277,34 @@ def ai_search(original_query: str = "") -> Optional[dict]:
     logger.info(f"Initial search query:")
     logger.info(f"    {original_query}")
 
-    # Generate additional search queries
-    additional_queries = expand_query(original_query)
+    # 1. Sanitize initial search query
+    sanitized_original_query = sanitize_initial_query(original_query)
+    logger.info(f"Sanitized original search query:")
+    logger.info(f"    {sanitized_original_query}")
+
+    # 2. Generate additional search queries
+    additional_queries = expand_query(sanitized_original_query)
     logger.info(
         f"Created {number_of_additional_queries} additional queries to gain a broader insight:"
     )
-    for query in additional_queries:
-        logger.info(f"    {query}")
+    for index, query in enumerate(additional_queries):
+        logger.info(f"    {index + 1}. {query}")
+    queries = [sanitized_original_query] + additional_queries  # Add initial query
 
-    queries = [original_query] + additional_queries  # Add original query
-
-    # Search each query.
+    # 3. Search each query
     search_results = perform_searches(queries)
     logger.info(f"Found {len(search_results)} related search results.")
+    sys.exit()
 
-    # Remove unused keys
+    # 4. Remove duplicate search results and unused keys
     unique_search_results = _remove_duplicates_and_unused_keys(search_results)
     logger.info(
         f"Removed {len(search_results) - len(unique_search_results)} duplicate search results."
     )
-
     logger.info(f"Analyzing the following {len(unique_search_results)} search results:")
     for index, result in enumerate(unique_search_results):
-        logger.info(f"    {index + 1}. {result.get('title')}")
+        title = result.get("title")
+        logger.info(f"    {index + 1}. {title}")
 
     # Remove search results that are irrelevant to the query
     # relevant_search_results = _remove_irrelevant_results(
@@ -247,19 +315,18 @@ def ai_search(original_query: str = "") -> Optional[dict]:
     # )
     relevant_search_results = unique_search_results
 
-    # Extract relevant text and links from search results
+    # 5. Extract relevant text and links from search results
     text, links = _extract_text_and_links(relevant_search_results)
-    logger.debug(f"{text = }")
-    logger.debug(f"{links = }")
 
-    # Generate overview.
-    data = _create_summary_from_text(text, queries)
+    # 6. Generate overview.
+    # data = _create_summary_from_text(text, queries)
+    data = _create_summary_from_text(text, sanitized_original_query)
     data["links"] = links
 
-    # Named entity recognition.
-    named_entities = _recognise_named_entities(data.get("overview"))
-    logger.debug(f"{named_entities = }")
-    data["named_entities"] = named_entities
+    # # 7. Named entity recognition.
+    # named_entities = _recognise_named_entities(data.get("overview"))
+    # logger.debug(f"{named_entities = }")
+    # data["named_entities"] = named_entities
 
     # Log overview generated.
     logger.debug(f"{data = }")
