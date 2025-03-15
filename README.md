@@ -1,8 +1,8 @@
-# ai_search
+# ai_overview
 
 ## About
 
-The code generates a comprehensive summary or overview based on an input query, leveraging query expansion, search, text extraction, and named entity recognition to produce a rich output containing relevant information and links.
+The code generates a comprehensive summary or overview based on an input query, leveraging query expansion, search, text extraction to produce a rich output containing relevant information and links.
 
 ## Environmental Variable
 
@@ -12,6 +12,7 @@ The code generates a comprehensive summary or overview based on an input query, 
 | GOOGLE_SEARCH_API_KEY | Google custom search API key |
 | LOGURU_LEVEL | The logging level, e.g. DEBUG, INFO, etc. |
 | HF_TOKEN | Hugging Face API key |
+| OPENAI_API_KEY | Open AI API key |
 
 ## Dependencies
 
@@ -22,7 +23,6 @@ https://github.com/ajrlewis/webkit.git
 ### LLM
 
 https://github.com/ajrlewis/aikit.git
-
 
 ## License
 

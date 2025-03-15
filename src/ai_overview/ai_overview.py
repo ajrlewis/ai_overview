@@ -1,7 +1,7 @@
 """
 The code generates a comprehensive summary or overview based on an input query,
-leveraging query expansion, search, text extraction, and named entity recognition
-to produce a rich output containing relevant information and links.
+leveraging query expansion, search, text extraction to produce a  rich output
+containing relevant information and links.
 """
 
 import datetime

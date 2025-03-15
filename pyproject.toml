@@ -6,7 +6,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai_search"
+name = "ai_overview"
 version = "0.1.0"
 description = "Generates an AI overview based on search results matching a query."
 readme = "README.md"
