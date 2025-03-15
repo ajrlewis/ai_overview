@@ -4,6 +4,7 @@ leveraging query expansion, search, text extraction, and named entity recognitio
 to produce a rich output containing relevant information and links.
 """
 
+import datetime
 import json
 import re
 import sys
@@ -11,14 +12,16 @@ import time
 from typing import Optional
 
 from aikit.chat import prompt_templates, tools
-from aikit.client import hugging_face_client
+from aikit.client import hugging_face_client, open_ai_client
 from loguru import logger
 import webkit
 
 # Configure LLM
 
-client = hugging_face_client.get_client()
-model = "mistralai/Mistral-7B-Instruct-v0.3"
+# client = hugging_face_client.get_client()
+# model = "mistralai/Mistral-7B-Instruct-v0.3"
+client = open_ai_client.get_client()
+model = "gpt-3.5-turbo"
 
 # Module variables
 
@@ -27,11 +30,10 @@ model = "mistralai/Mistral-7B-Instruct-v0.3"
 number_of_additional_queries = 3  # The number of additional queries to generate
 number_of_search_results = 5  # The number of search results per query
 
-
 # LLM Prompts
 
 QUERY_SANITIZATION_TEMPLATE = """
-Sanitize (i.e. correct any spelling mistakes, etc.) the following search query:
+Sanitize the following search query:
 
     {query}
 
@@ -67,7 +69,7 @@ Return your answer as a list of float values, e.g.
     [ 0.0, 100.0, 20.0, ... ]
 """
 
-OVERVIEW_PROMPT = """
+OVERVIEW_TEMPLATE = """
 Analyze the provided information:
 
     {text}
@@ -155,36 +157,120 @@ def search_results_relevance(query: str, search_results: list[str]) -> list[floa
     return relevances
 
 
+# def recognise_named_entities(text: str) -> list[dict]:
+#     logger.debug(f"{text = }")
+#     named_entities = tools.named_entity_recognition(
+#         client=client, model=model, text=text
+#     )
+#     logger.debug(f"{named_entities = }")
+#     return named_entities
+def recognise_named_entities(text: str) -> list[dict]:
+    """
+    Recognises named entities in the provided text.
+
+    This method uses a named entity recognition model to identify and extract named entities
+    from the provided text. The extracted entities are returned as a list of dictionaries,
+    where each dictionary contains information about the entity.
+
+    Args:
+        text (str): The text to extract named entities from.
+
+    Returns:
+        list[dict]: A list of dictionaries, where each dictionary contains information about a named entity.
+
+    Raises:
+        Exception: If an error occurs during named entity recognition.
+    """
+    logger.debug(f"Recognising named entities in text: {len(text)} characters")
+    try:
+        # Perform named entity recognition on the text
+        named_entities = tools.named_entity_recognition(
+            client=client, model=model, text=text
+        )
+        logger.debug(f"Extracted {len(named_entities)} named entities")
+        return named_entities
+    except Exception as e:
+        logger.error(f"Error recognising named entities: {e}")
+
+
 def generate_overview(text: str, queries: list[str]) -> str:
-    logger.debug(f"{text = } {queries = }")
-    question = OVERVIEW_PROMPT.format(text=text, queries=queries)
-    overview = tools.ask(client=client, model=model, question=question)
-    logger.debug(f"{overview = }")
-    return overview
+    """
+    Generates an overview based on the provided text and queries.
 
+    This method uses a language model to generate an overview by asking a question
+    that includes the provided text and queries. The question is formatted using the
+    OVERVIEW_TEMPLATE template.
 
-#
+    Args:
+        text (str): The text to include in the overview.
+        queries (list[str]): The queries to include in the overview.
 
+    Returns:
+        str: The generated overview.
 
-def _create_summary_from_text(text: str, queries: list[str]) -> dict:
-    data = {}
-    overview = generate_overview(text, queries)
-    data["overview"] = overview
-    return data
+    Raises:
+        Exception: If an error occurs during the generation of the overview.
+    """
+    logger.debug(
+        f"Generating overview for text: {len(text)} characters, queries: {len(queries)}"
+    )
+    try:
+        # Format the question using the OVERVIEW_TEMPLATE template
+        question = OVERVIEW_TEMPLATE.format(text=text, queries=queries)
+        logger.debug(f"Formatted question: {len(question)} characters")
+
+        # Ask the language model to generate an overview
+        overview = tools.ask(client=client, model=model, question=question)
+        logger.debug(f"Generated overview: {len(overview)} characters")
+
+        return overview
+    except Exception as e:
+        logger.error(f"Error generating overview: {e}")
+        # Consider re-raising the exception or handling it in a way that makes sense for your application
 
 
 # Search Result Methods.
 
 
-def _remove_duplicates_and_unused_keys(search_results: list[dict]) -> list[dict]:
-    """Removes duplicate search results with the same link.
-    Keeps only body text from search result and removes any duplicate"""
-    search_results = [
-        {k: v for k, v in r.items() if k not in ("body")} for r in search_results
-    ]
-    unique_search_results = set(tuple(sorted(r.items())) for r in search_results)
-    unique_search_results = [dict(t) for t in unique_search_results]
-    return unique_search_results
+def remove_duplicates_and_unused_keys(search_results: list[dict]) -> list[dict]:
+    """
+    Removes duplicate search results with the same link and removes unused keys.
+
+    This method first removes the 'body' key from each search result, as it is not needed.
+    It then removes any duplicate search results by converting the dictionaries to tuples,
+    adding them to a set (which automatically removes duplicates), and then converting them back to dictionaries.
+
+    Args:
+        search_results (list[dict]): A list of dictionaries, where each dictionary represents a search result.
+
+    Returns:
+        list[dict]: A list of dictionaries, where each dictionary represents a unique search result with only the necessary keys.
+
+    Raises:
+        Exception: If an error occurs during the processing of the search results.
+    """
+    logger.debug(
+        f"Removing duplicates and unused keys from {len(search_results)} search results"
+    )
+    try:
+        # Remove the 'body' key from each search result
+        search_results = [
+            {k: v for k, v in r.items() if k != "body"} for r in search_results
+        ]
+        logger.debug(f"Removed 'body' key from search results")
+
+        # Remove any duplicate search results
+        unique_search_results = set(tuple(sorted(r.items())) for r in search_results)
+        logger.debug(
+            f"Removed {len(search_results) - len(unique_search_results)} duplicate search results"
+        )
+
+        # Convert the set of tuples back to a list of dictionaries
+        unique_search_results = [dict(t) for t in unique_search_results]
+        logger.debug(f"Processed search results: {len(unique_search_results)}")
+        return unique_search_results
+    except Exception as e:
+        logger.error(f"Error removing duplicates and unused keys: {e}")
 
 
 def _remove_irrelevant_results(
@@ -203,28 +289,51 @@ def _remove_irrelevant_results(
     return relevant_search_results
 
 
-def _extract_text_and_links(search_results: list[dict]) -> tuple[str, list[str]]:
-    texts = []
-    links = []
-    for search_result in search_results:
-        title = search_result.get("title")
-        snippet = search_result.get("snippet")
-        href = search_result.get("href")
-        links.append(href)
-        text = f"{title} {snippet}"
-        texts.append(text)
-    text = "\n".join(texts)
-    links = list(set(links))
-    return text, links
+def extract_text_and_links(search_results: list[dict]) -> tuple[str, list[str]]:
+    """
+    Extracts the text and links from a list of search results.
 
+    This method iterates over each search result, extracts the title, snippet, and link,
+    and combines the title and snippet into a single text string. It also adds the link to a list of links.
+    Finally, it joins the text strings into a single string and removes any duplicate links.
 
-def _recognise_named_entities(text: str) -> list[dict]:
-    logger.debug(f"{text = }")
-    named_entities = tools.named_entity_recognition(
-        client=client, model=model, text=text
-    )
-    logger.debug(f"{named_entities = }")
-    return named_entities
+    Args:
+        search_results (list[dict]): A list of dictionaries, where each dictionary represents a search result.
+
+    Returns:
+        tuple[str, list[str]]: A tuple containing the extracted text and a list of unique links.
+
+    Raises:
+        Exception: If an error occurs during the processing of the search results.
+    """
+    logger.debug(f"Extracting text and links from {len(search_results)} search results")
+    try:
+        texts = []
+        links = []
+        for search_result in search_results:
+            # Extract the title, snippet, and link from the search result
+            title = search_result.get("title", "").strip()
+            snippet = search_result.get("snippet", "").strip()
+            href = search_result.get("href", "").strip()
+
+            # Add the link to the list of links
+            links.append(href)
+
+            # Combine the title and snippet into a single text string
+            text = f"{title}: {snippet}"
+            texts.append(text)
+
+        # Join the text strings into a single string
+        text = "\n".join(texts)
+        logger.debug(f"Extracted text: {len(text)} characters")
+
+        # Remove any duplicate links
+        links = list(set(links))
+        logger.debug(f"Extracted {len(links)} unique links")
+
+        return text, links
+    except Exception as e:
+        logger.error(f"Error extracting text and links: {e}")
 
 
 def perform_searches(queries: list[str]) -> list[dict]:
@@ -270,34 +379,50 @@ def _log_overview(data: dict):
 
 
 def ai_search(original_query: str = "") -> Optional[dict]:
-    now = time.time()
+    """
+    Performs a detailed search using AI.
+
+    Args:
+        original_query (str): The initial search query.
+
+    Returns:
+        dict: A dictionary containing the search results, including an overview, links, named entities, and the time searched.
+    """
+
     if not original_query:
-        logger.error(f"Initial search query not supplied!")
+        logger.error("Initial search query not supplied!")
         return
-    logger.info(f"Initial search query:")
+
+    # Log initial search query
+    logger.info("Initial search query:")
     logger.info(f"    {original_query}")
 
-    # 1. Sanitize initial search query
-    sanitized_original_query = sanitize_initial_query(original_query)
-    logger.info(f"Sanitized original search query:")
-    logger.info(f"    {sanitized_original_query}")
+    # Sanitize initial search query
+    sanitized_query = sanitize_initial_query(original_query)
+    logger.info("Sanitized original search query:")
+    logger.info(f"    {sanitized_query}")
 
-    # 2. Generate additional search queries
-    additional_queries = expand_query(sanitized_original_query)
+    # Generate additional search queries
+    additional_queries = expand_query(sanitized_query)
     logger.info(
-        f"Created {number_of_additional_queries} additional queries to gain a broader insight:"
+        f"Created {len(additional_queries)} additional queries to gain a broader insight:"
     )
     for index, query in enumerate(additional_queries):
         logger.info(f"    {index + 1}. {query}")
-    queries = [sanitized_original_query] + additional_queries  # Add initial query
 
-    # 3. Search each query
+    # Combine initial query with additional queries
+    queries = [sanitized_query] + additional_queries
+
+    # Search each query and measure time
+    start_time = time.time()
     search_results = perform_searches(queries)
-    logger.info(f"Found {len(search_results)} related search results.")
-    sys.exit()
+    end_time = time.time()
+    logger.info(
+        f"Found {len(search_results)} related search results in {round(end_time - start_time, 2)} seconds."
+    )
 
-    # 4. Remove duplicate search results and unused keys
-    unique_search_results = _remove_duplicates_and_unused_keys(search_results)
+    # Remove duplicate search results and unused keys
+    unique_search_results = remove_duplicates_and_unused_keys(search_results)
     logger.info(
         f"Removed {len(search_results) - len(unique_search_results)} duplicate search results."
     )
@@ -306,36 +431,40 @@ def ai_search(original_query: str = "") -> Optional[dict]:
         title = result.get("title")
         logger.info(f"    {index + 1}. {title}")
 
-    # Remove search results that are irrelevant to the query
-    # relevant_search_results = _remove_irrelevant_results(
-    #     original_query, unique_search_results
-    # )
-    # logger.info(
-    #     f"Removed {len(unique_search_results) - len(relevant_search_results)} irrelevant search results."
-    # )
-    relevant_search_results = unique_search_results
+    # Extract text and links from search results
+    text, links = extract_text_and_links(unique_search_results)
 
-    # 5. Extract relevant text and links from search results
-    text, links = _extract_text_and_links(relevant_search_results)
+    # Generate overview
+    overview = generate_overview(text, queries)
+    logger.info("Generated overview:")
+    logger.info(f"{overview}")
 
-    # 6. Generate overview.
-    # data = _create_summary_from_text(text, queries)
-    data = _create_summary_from_text(text, sanitized_original_query)
-    data["links"] = links
+    # Perform named entity recognition
+    named_entities = recognise_named_entities(overview)
+    # logger.info("Named entities:")
+    # for index, named_entity in enumerate(named_entities):
+    #     entity_category = named_entity["category"]
+    #     entity_type = named_entity["type"]
+    #     entity_confidence = named_entity["confidence"]
+    #     entity_text = named_entity["text"]
+    #     logger.info(
+    #         f"    {index + 1}. {entity_category}: {entity_type} [{entity_confidence}]"
+    #     )
+    #     logger.info(f"    {entity_text}")
 
-    # # 7. Named entity recognition.
-    # named_entities = _recognise_named_entities(data.get("overview"))
-    # logger.debug(f"{named_entities = }")
-    # data["named_entities"] = named_entities
-
-    # Log overview generated.
+    # Construct data to return
+    data = {
+        "overview": overview,
+        "links": links,
+        "named_entities": named_entities,
+        "searched_on": datetime.datetime.now(),
+    }
     logger.debug(f"{data = }")
-    _log_overview(data)
 
     # Log duration
-    duration = time.time() - now
+    duration = time.time() - start_time
     print()
-    logger.info(f"Completed AI search in {round(duration)} seconds!")
+    logger.info(f"Completed AI search in {round(duration, 2)} seconds!")
 
     return data
 
