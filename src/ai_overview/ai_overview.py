@@ -40,6 +40,14 @@ Sanitize the following search query:
 Return only the sanitized search query in your response.
 """
 
+QUERY_INTENT_TEMPLATE = """
+Analyze the intent behind the following search query:
+
+    {query}
+
+Extract and return a concise description of the user's intent.
+"""
+
 EXPAND_QUERY_TEMPLATE = """
 Generate {number_of_additional_queries} related search queries based on:
 
@@ -69,22 +77,33 @@ Return your answer as a list of float values, e.g.
     [ 0.0, 100.0, 20.0, ... ]
 """
 
+# OVERVIEW_TEMPLATE = """
+# Analyze the provided information:
+
+#     {text}
+
+# Create a concise overview that addresses the following questions:
+
+#     {queries}
+
+# When generating the overview, disregard any information that:
+# - does not contain the required details
+# - is not relevant to the questions
+# - is duplicated
+# - appears inconsistent with the majority of the information
+
+# Present the overview in a straightforward manner, focusing on the subject matter.
+# """
 OVERVIEW_TEMPLATE = """
 Analyze the provided information:
 
     {text}
 
-Create a concise overview that addresses the following questions:
+Create an informative AI overview that addresses the following intent:
 
-    {queries}
+    {intent}
 
-When generating the overview, disregard any information that:
-- does not contain the required details
-- is not relevant to the questions
-- is duplicated
-- appears inconsistent with the majority of the information
-
-Present the overview in a straightforward manner, focusing on the subject matter.
+When generating the overview, disregard any information that appears inconsistent with the majority of the information.
 """
 
 # LLM Methods
@@ -111,6 +130,30 @@ def sanitize_initial_query(query: str) -> str:
         return sanitized_query
     except Exception as e:
         logger.error(f"Error sanitizing query: {e}")
+        raise
+
+
+def generate_intent(query: str) -> str:
+    """
+    Generates the intent behind a given query by formatting it into a prompt and then using a language model to generate a descriptive intent.
+
+    Args:
+        query (str): The query for which to generate the intent.
+
+    Returns:
+        str: The generated intent.
+
+    Raises:
+        Exception: If an error occurs during the intent generation process.
+    """
+    logger.debug(f"{query = }")
+    question = QUERY_INTENT_TEMPLATE.format(query=query)
+    try:
+        intent = tools.ask(client=client, model=model, question=question)
+        logger.debug(f"{intent = }")
+        return intent
+    except Exception as e:
+        logger.error(f"Error generating intent: {e}")
         raise
 
 
@@ -157,13 +200,6 @@ def search_results_relevance(query: str, search_results: list[str]) -> list[floa
     return relevances
 
 
-# def recognise_named_entities(text: str) -> list[dict]:
-#     logger.debug(f"{text = }")
-#     named_entities = tools.named_entity_recognition(
-#         client=client, model=model, text=text
-#     )
-#     logger.debug(f"{named_entities = }")
-#     return named_entities
 def recognise_named_entities(text: str) -> list[dict]:
     """
     Recognises named entities in the provided text.
@@ -193,7 +229,43 @@ def recognise_named_entities(text: str) -> list[dict]:
         logger.error(f"Error recognising named entities: {e}")
 
 
-def generate_overview(text: str, queries: list[str]) -> str:
+# def generate_overview(text: str, queries: list[str]) -> str:
+#     """
+#     Generates an overview based on the provided text and queries.
+
+#     This method uses a language model to generate an overview by asking a question
+#     that includes the provided text and queries. The question is formatted using the
+#     OVERVIEW_TEMPLATE template.
+
+#     Args:
+#         text (str): The text to include in the overview.
+#         queries (list[str]): The queries to include in the overview.
+
+#     Returns:
+#         str: The generated overview.
+
+#     Raises:
+#         Exception: If an error occurs during the generation of the overview.
+#     """
+#     logger.debug(
+#         f"Generating overview for text: {len(text)} characters, queries: {len(queries)}"
+#     )
+#     try:
+#         # Format the question using the OVERVIEW_TEMPLATE template
+#         question = OVERVIEW_TEMPLATE.format(text=text, queries=queries)
+#         logger.debug(f"Formatted question: {len(question)} characters")
+
+#         # Ask the language model to generate an overview
+#         overview = tools.ask(client=client, model=model, question=question)
+#         logger.debug(f"Generated overview: {len(overview)} characters")
+
+#         return overview
+#     except Exception as e:
+#         logger.error(f"Error generating overview: {e}")
+#         # Consider re-raising the exception or handling it in a way that makes sense for your application
+
+
+def generate_overview(text: str, intent: str) -> str:
     """
     Generates an overview based on the provided text and queries.
 
@@ -212,11 +284,11 @@ def generate_overview(text: str, queries: list[str]) -> str:
         Exception: If an error occurs during the generation of the overview.
     """
     logger.debug(
-        f"Generating overview for text: {len(text)} characters, queries: {len(queries)}"
+        f"Generating overview for text: {len(text)} characters, intent: {len(intent)}"
     )
     try:
         # Format the question using the OVERVIEW_TEMPLATE template
-        question = OVERVIEW_TEMPLATE.format(text=text, queries=queries)
+        question = OVERVIEW_TEMPLATE.format(text=text, intent=intent)
         logger.debug(f"Formatted question: {len(question)} characters")
 
         # Ask the language model to generate an overview
@@ -393,6 +465,8 @@ def ai_search(original_query: str = "") -> Optional[dict]:
         logger.error("Initial search query not supplied!")
         return
 
+    start_time = time.time()
+
     # Log initial search query
     logger.info("Initial search query:")
     logger.info(f"    {original_query}")
@@ -401,6 +475,12 @@ def ai_search(original_query: str = "") -> Optional[dict]:
     sanitized_query = sanitize_initial_query(original_query)
     logger.info("Sanitized original search query:")
     logger.info(f"    {sanitized_query}")
+
+    # Intent of search query
+    intent_of_query = generate_intent(sanitized_query)
+    logger.info("Intent of sanitized original search query:")
+    logger.info(f"    {intent_of_query}")
+    # sys.exit()
 
     # Generate additional search queries
     additional_queries = expand_query(sanitized_query)
@@ -414,12 +494,8 @@ def ai_search(original_query: str = "") -> Optional[dict]:
     queries = [sanitized_query] + additional_queries
 
     # Search each query and measure time
-    start_time = time.time()
     search_results = perform_searches(queries)
-    end_time = time.time()
-    logger.info(
-        f"Found {len(search_results)} related search results in {round(end_time - start_time, 2)} seconds."
-    )
+    logger.info(f"Found {len(search_results)} related search results.")
 
     # Remove duplicate search results and unused keys
     unique_search_results = remove_duplicates_and_unused_keys(search_results)
@@ -463,7 +539,6 @@ def ai_search(original_query: str = "") -> Optional[dict]:
 
     # Log duration
     duration = time.time() - start_time
-    print()
     logger.info(f"Completed AI search in {round(duration, 2)} seconds!")
 
     return data
